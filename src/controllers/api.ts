@@ -1,15 +1,10 @@
-import DatabaseConstructor, { type Database } from "better-sqlite3";
-import { Application, Request, Response } from "express";
+import DatabaseConstructor, {type Database} from "better-sqlite3";
+import {Application, Request, Response} from "express";
 import httpContext from "express-http-context";
 import fs from "fs";
-import {
-  JSONRPCErrorResponse,
-  JSONRPCParams,
-  JSONRPCResponse,
-  JSONRPCServer,
-} from "json-rpc-2.0";
+import {JSONRPCErrorResponse, JSONRPCParams, JSONRPCResponse, JSONRPCServer,} from "json-rpc-2.0";
 import multer from "multer";
-import { homedir } from "os";
+import {homedir} from "os";
 import path from "path";
 
 import {
@@ -28,10 +23,10 @@ import {
   NotFoundConsignment,
   NotFoundMedia,
 } from "../errors";
-import { logger } from "../logger";
-import { genHashFromFile, setDir } from "../util";
-import { DEFAULT_APP_DATA } from "../vars";
-import { APP_VERSION } from "../version";
+import {logger} from "../logger";
+import {genHashFromFile, setDir} from "../util";
+import {DEFAULT_APP_DATA} from "../vars";
+import {APP_VERSION} from "../version";
 
 const PROTOCOL_VERSION = "0.2";
 
@@ -43,7 +38,7 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({storage});
 
 let appDir: string;
 let db: Database;
@@ -284,7 +279,23 @@ jsonRpcServer.addMethod(
           fs.unlinkSync(path.join(tempDir, file.filename));
           return false;
         } else {
-          throw new CannotChangeUploadedFile(jsonRpcParams);
+          // throw new CannotChangeUploadedFile(jsonRpcParams);
+          // Allow to change the file for RBF
+          logger.warning(
+            `RBF Changing uploaded file for recipient ${recipientID} from ` +
+            `${prevFile.filename} to ${fileHash}`
+          );
+          fs.renameSync(uploadedFile, path.join(consignmentDir, fileHash));
+          const update = db.prepare(
+            `UPDATE consignments
+             SET filename = ?,
+                 txid = ?,
+                 vout = ?,
+                 ack = ?
+             WHERE recipient_id = ?`
+          );
+          update.run(fileHash, txid, vout, null, recipientID);
+          return true;
         }
       }
       fs.renameSync(uploadedFile, path.join(consignmentDir, fileHash));
@@ -400,21 +411,23 @@ export const loadApiEndpoints = (app: Application): void => {
   db = new DatabaseConstructor(path.join(appDir, DATABASE_FILE), {});
   db.pragma("journal_mode = WAL");
   const createConsignmentsTable = db.prepare(
-    `CREATE TABLE IF NOT EXISTS consignments (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       recipient_id TEXT NOT NULL UNIQUE,
-       filename TEXT NOT NULL,
-       txid TEXT NOT NULL,
-       vout INTEGER,
-       ack INTEGER
+    `CREATE TABLE IF NOT EXISTS consignments
+     (
+         id           INTEGER PRIMARY KEY AUTOINCREMENT,
+         recipient_id TEXT NOT NULL UNIQUE,
+         filename     TEXT NOT NULL,
+         txid         TEXT NOT NULL,
+         vout         INTEGER,
+         ack          INTEGER
      )`
   );
   createConsignmentsTable.run();
   const createMediaTable = db.prepare(
-    `CREATE TABLE IF NOT EXISTS media (
-       id INTEGER PRIMARY KEY AUTOINCREMENT,
-       attachment_id TEXT NOT NULL UNIQUE,
-       filename TEXT NOT NULL
+    `CREATE TABLE IF NOT EXISTS media
+     (
+         id            INTEGER PRIMARY KEY AUTOINCREMENT,
+         attachment_id TEXT NOT NULL UNIQUE,
+         filename      TEXT NOT NULL
      )`
   );
   createMediaTable.run();
@@ -438,12 +451,12 @@ export const loadApiEndpoints = (app: Application): void => {
       httpContext.set("apiMethod", req.body["method"]);
       httpContext.set("reqParams", reqParams);
       httpContext.set("clientID", jsonRPCRequest.id);
-      logger.info("", { req });
+      logger.info("", {req});
 
       // call API method
       const file = req.file;
       jsonRpcServer
-        .receive(jsonRPCRequest, { file })
+        .receive(jsonRPCRequest, {file})
         .then((jsonRPCResponse) => {
           if (jsonRPCResponse) {
             // response logs
